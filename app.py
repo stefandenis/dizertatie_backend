@@ -5,6 +5,7 @@ from sklearn.model_selection import train_test_split
 from flask_cors import CORS, cross_origin
 from nl_cnn_1d import create_nl_cnn_model as create_1d_cnn_model
 from nl_cnn_2d import create_nl_cnn_model as create_2d_cnn_model
+from keras.models import load_model
 
 import scipy.io as sio
 import numpy as np
@@ -108,6 +109,8 @@ def get_dataset(dataset):
 @cross_origin(origin='*')
 @app.route('/create-and-train', methods=['POST'])
 def create_model_and_train():  # put application's code here
+    save_model = request.json.get("save_model")
+    loaded_model_name = request.json.get("load_model")
     dataset = request.json.get("dataset")
     conv_dimension = request.json.get("conv_dimension")
     k = request.json.get("k")
@@ -119,39 +122,58 @@ def create_model_and_train():  # put application's code here
     epochs = request.json.get("epochs")
     x_train, y_train, x_test, y_test, x_valid, y_valid, num_classes = get_dataset(dataset)
     input_shape = np.shape(x_train)[1:4]
+    if save_model is not None:
+        if conv_dimension == "1D":
+            model = create_1d_cnn_model(input_shape, num_classes, k=k,separ=0, flat=0, width=filtre, nl=(nl0,nl1),
+                                        add_layer=0, learning_rate=learning_rate, dropout=dropout)
+        else:
+            model = create_2d_cnn_model(input_shape, num_classes, k=k, separ=0, flat=0, width=filtre, nl=(nl0,nl1),
+                                        add_layer=0, learning_rate=learning_rate, dropout=dropout)
 
-    if conv_dimension == "1D":
-        model = create_1d_cnn_model(input_shape, num_classes, k=k,separ=0, flat=0, width=filtre, nl=(nl0,nl1),
-                                    add_layer=0, learning_rate=learning_rate, dropout=dropout)
-    else:
-        model = create_2d_cnn_model(input_shape, num_classes, k=k, separ=0, flat=0, width=filtre, nl=(nl0,nl1),
-                                    add_layer=0, learning_rate=learning_rate, dropout=dropout)
+        model.summary()
+        history = model.fit(x_train, y_train,
+                            batch_size=5,
+                            epochs=epochs,
+                            verbose=1,  # aici 0 (nu afiseaza nimic) 1 (detaliat) 2(numai epocile)
+                            validation_data=(x_valid, y_valid))
 
-    model.summary()
-    history = model.fit(x_train, y_train,
-                        batch_size=5,
-                        epochs=epochs,
-                        verbose=1,  # aici 0 (nu afiseaza nimic) 1 (detaliat) 2(numai epocile)
-                        validation_data=(x_valid, y_valid))
+    if loaded_model_name is not None:
+        print("loading model: ", loaded_model_name)
+        model = load_model(loaded_model_name)
+        print("model loaded: ", loaded_model_name)
+
     import os
     os.environ["PATH"] += os.pathsep + 'C:/Program Files/Graphviz/bin/'
     tensorflow.keras.utils.plot_model(model, "model.png", show_shapes=True, show_layer_names=True)
 
-    plt.plot(history.history['accuracy'])
-    plt.plot(history.history['val_accuracy'])
-    plt.title('model accuracy')
-    plt.ylabel('accuracy')
-    plt.xlabel('epoch')
-    plt.legend(['train', 'test'], loc='upper right')
-    plt.savefig("validation.png")
+    if save_model is not None:
+        plt.plot(history.history['accuracy'])
+        plt.plot(history.history['val_accuracy'])
+        plt.title('model accuracy')
+        plt.ylabel('accuracy')
+        plt.xlabel('epoch')
+        plt.legend(['train', 'test'], loc='upper right')
+        plt.savefig("validation.png")
 
     shutil.copy("model.png", "static")
-    shutil.copy("validation.png", "static")
+    if save_model is not None:
+        shutil.copy("validation.png", "static")
+    import time
+    initial_time = time.time()
     score = model.evaluate(x_test, y_test, verbose=1)
+    final_time = time.time()
+    print(f"Time to evaluate {len(y_test)} test samples: ", final_time - initial_time, " s")
+    if save_model is not None:
+        print("saving model: ", save_model)
+        model.save(save_model)
+        print("done saving model: ", save_model)
+
     return jsonify({
         "model": "/static/model.png",
         "validation": "/static/validation.png",
-        "accuracy": score[1]
+        "accuracy": score[1],
+        "test_data_length": len(y_test),
+        "prediction_time": final_time - initial_time
     })
 
 
